@@ -1,0 +1,106 @@
+name: setup toolbelt
+description: >-
+  Install toolbelt 0.1.2 and, given a consumer binding, install what it
+  selects with toolbelt install: verified against the binding, its lock and
+  its supply assertion, retrieved bytes checked by digest before anything is
+  written, into a new directory, and put on the job's PATH. Installing is not
+  authorization.
+
+# Rendered by internal-sdlc-tooling's release for toolbelt-v0.1.2. Each
+# platform's archive SHA-256 is pinned here, so pinning this action's commit
+# pins the toolbelt the job runs. The archives are not signed: the SHA-256
+# verifies the bytes, not who published them.
+#
+# The action reads no secret and assumes no access. When the supply needs
+# credentials, the calling step sets TOOLBELT_HTTP_USERNAME and
+# TOOLBELT_HTTP_PASSWORD in its own env; toolbelt sends them only over https.
+# All checking is toolbelt install's: this action only runs it.
+
+inputs:
+  binding:
+    description: The consumer's consumer-binding.v1. Empty installs toolbelt alone.
+    required: false
+    default: ""
+  lock:
+    description: The requirement-lock.v1 the binding was made for.
+    required: false
+    default: ""
+  assertion:
+    description: The supply-assertion.v1 the selection rests on.
+    required: false
+    default: ""
+  tool:
+    description: The toolchain row to install.
+    required: false
+    default: erlang
+  dest:
+    description: The directory to install into, new or empty. Default RUNNER_TEMP/toolbelt/TOOL.
+    required: false
+    default: ""
+  record:
+    description: Where to write the installation.v1 record. Default RUNNER_TEMP/toolbelt/installation-TOOL.json.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: The toolbelt version installed.
+    value: "0.1.2"
+  record:
+    description: The installation.v1 record, for artifact upload.
+    value: ${{ steps.install.outputs.record }}
+  bin:
+    description: The installed runtime's bin directory, already on PATH.
+    value: ${{ steps.install.outputs.bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install toolbelt 0.1.2
+      id: toolbelt
+      shell: bash
+      env:
+        VERSION: "0.1.2"
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) platform=linux-amd64 sha256=c4b508a38757a6d663605ee0bd8db1bd39b5909e3e246526857272868cde042a ;;
+          Linux-ARM64) platform=linux-arm64 sha256=57b5006fda10fcc1010447b7096c7d4ddeb2b26db00d1d2d86e64dbf2a5ff06d ;;
+          macOS-X64) platform=darwin-amd64 sha256=71b1f8ef45ad410e17fcc04071e8e7d529bae88d69ec46a7c581557ead59382b ;;
+          macOS-ARM64) platform=darwin-arm64 sha256=5f3ddc75be7a2837f83865ccfa68a9d5c08a67b736edf8aff655e8d3f9f75a7d ;;
+          *) echo "::error::toolbelt ${VERSION} has no release for ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        archive="toolbelt-${VERSION}-${platform}.tar.gz"
+        dir="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/toolbelt/${VERSION}"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 --proto '=https' -o "$RUNNER_TEMP/$archive" \
+          "https://github.com/ConnectedLabs/toolbelt/releases/download/toolbelt-v${VERSION}/${archive}"
+        echo "${sha256}  $RUNNER_TEMP/$archive" | shasum -a 256 -c - >/dev/null ||
+          { echo "::error::${archive} does not match the SHA-256 this action pins"; exit 1; }
+        tar -xzf "$RUNNER_TEMP/$archive" -C "$dir" --strip-components 1 "toolbelt-${VERSION}-${platform}/toolbelt"
+        rm -f "$RUNNER_TEMP/$archive"
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "path=$dir/toolbelt" >> "$GITHUB_OUTPUT"
+        "$dir/toolbelt" version
+
+    - name: Install ${{ inputs.tool }} from the consumer's binding
+      id: install
+      if: inputs.binding != ''
+      shell: bash
+      env:
+        TOOLBELT: ${{ steps.toolbelt.outputs.path }}
+        BINDING: ${{ inputs.binding }}
+        LOCK: ${{ inputs.lock }}
+        ASSERTION: ${{ inputs.assertion }}
+        TOOL: ${{ inputs.tool }}
+        DEST: ${{ inputs.dest }}
+        RECORD: ${{ inputs.record }}
+      run: |
+        set -euo pipefail
+        dest="${DEST:-$RUNNER_TEMP/toolbelt/$TOOL}"
+        record="${RECORD:-$RUNNER_TEMP/toolbelt/installation-$TOOL.json}"
+        mkdir -p "$(dirname "$record")"
+        "$TOOLBELT" install --binding "$BINDING" --lock "$LOCK" --assertion "$ASSERTION" --tool "$TOOL" \
+          --dest "$dest" --record "$record" --add-to-path
+        echo "record=$record" >> "$GITHUB_OUTPUT"
+        echo "bin=$dest/bin" >> "$GITHUB_OUTPUT"

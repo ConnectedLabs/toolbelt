@@ -1,0 +1,44 @@
+name: setup access-probe
+description: >-
+  Install access-probe 0.1.3, the execution adapter that exercises one
+  credential-dependent operation in this job and records only its outcome,
+  for TSquare. It installs the binary and nothing else: it reads no secret
+  and runs no probe.
+
+# Rendered by internal-sdlc-tooling's release for toolbelt-v0.1.3. Each
+# platform's archive SHA-256 is pinned here, so pinning this action's commit
+# pins the bytes the job runs. The archives are not signed: the SHA-256
+# verifies the bytes, not who published them.
+
+outputs:
+  version:
+    description: The installed access-probe version.
+    value: "0.1.3"
+
+runs:
+  using: composite
+  steps:
+    - name: Install access-probe 0.1.3
+      shell: bash
+      env:
+        VERSION: "0.1.3"
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) platform=linux-amd64 sha256=f8f782533c8273d2b113eb6f4141d099628dd2ad07071761ecedd487a37d89ed ;;
+          Linux-ARM64) platform=linux-arm64 sha256=9e7812ba7820e9fb48885d9c0224962dab66f97bd8446afbbe59eaad1b0b66e1 ;;
+          macOS-X64) platform=darwin-amd64 sha256=16d90e3991e530b1043f7a5c67ae5c85959f8640105fd5bc172de54593a815ab ;;
+          macOS-ARM64) platform=darwin-arm64 sha256=10c7fb26f57d406764b8b109b3bd9dff726a1b0281432f2debccb45fcf19237a ;;
+          *) echo "::error::access-probe ${VERSION} has no release for ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        archive="access-probe-${VERSION}-${platform}.tar.gz"
+        dir="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/access-probe/${VERSION}"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 --proto '=https' -o "$RUNNER_TEMP/$archive" \
+          "https://github.com/ConnectedLabs/toolbelt/releases/download/toolbelt-v${VERSION}/${archive}"
+        echo "${sha256}  $RUNNER_TEMP/$archive" | shasum -a 256 -c - >/dev/null ||
+          { echo "::error::${archive} does not match the SHA-256 this action pins"; exit 1; }
+        tar -xzf "$RUNNER_TEMP/$archive" -C "$dir" --strip-components 1 "access-probe-${VERSION}-${platform}/access-probe"
+        rm -f "$RUNNER_TEMP/$archive"
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/access-probe" version

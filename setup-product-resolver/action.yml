@@ -1,0 +1,61 @@
+name: setup product-resolver
+description: >-
+  Install product-resolver 0.1.7 without resolving or updating a dependency
+  lock. Registry credentials, when required by a later resolver invocation,
+  remain the calling step's responsibility.
+
+# Rendered by internal-sdlc-tooling's release for toolbelt-v0.1.7. Each
+# platform archive's SHA-256 is pinned here, so pinning this action's commit
+# pins the bytes the job runs. Installation does not contact an OCI registry.
+# The archives are not signed: the SHA-256 verifies bytes, not who published
+# them.
+
+outputs:
+  version:
+    description: The installed product-resolver version.
+    value: "0.1.7"
+  path:
+    description: The absolute path to product-resolver.
+    value: ${{ steps.resolver.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install product-resolver 0.1.7
+      id: resolver
+      shell: bash
+      env:
+        VERSION: "0.1.7"
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) platform=linux-amd64 sha256=6fe142842c162de46c77cf645f914f2f5e7c14d1e9799e612f29468284039a2f ;;
+          Linux-ARM64) platform=linux-arm64 sha256=c07054613f7489575b641676fd6e4e446dde5545ba6b0609fd3d2c2447bc3e6e ;;
+          macOS-X64) platform=darwin-amd64 sha256=502e3971ce87cee566f8b45eefe964e3f28515f60a2742be2ccb449648ec61f7 ;;
+          macOS-ARM64) platform=darwin-arm64 sha256=f5464e3241a7474e0de28aaebbfae34707c4746c49e343112ad4b284f10b38aa ;;
+          *) echo "::error::product-resolver ${VERSION} has no release for ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        archive="product-resolver-${VERSION}-${platform}.tar.gz"
+        dir="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/product-resolver/${VERSION}"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 --proto '=https' -o "$RUNNER_TEMP/$archive" \
+          "https://github.com/ConnectedLabs/toolbelt/releases/download/toolbelt-v${VERSION}/${archive}"
+        echo "${sha256}  $RUNNER_TEMP/$archive" | shasum -a 256 -c - >/dev/null ||
+          { echo "::error::${archive} does not match the SHA-256 this action pins"; exit 1; }
+        tar -xzf "$RUNNER_TEMP/$archive" -C "$dir" --strip-components 1 \
+          "product-resolver-${VERSION}-${platform}/product-resolver"
+        rm -f "$RUNNER_TEMP/$archive"
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "path=$dir/product-resolver" >> "$GITHUB_OUTPUT"
+
+    - name: Validate product-resolver executable
+      shell: bash
+      env:
+        PRODUCT_RESOLVER: ${{ steps.resolver.outputs.path }}
+      run: |
+        set -euo pipefail
+        if output="$("$PRODUCT_RESOLVER" 2>&1)"; then
+          echo "::error::product-resolver without an operation unexpectedly succeeded"
+          exit 1
+        fi
+        grep -q '^usage:' <<<"$output"

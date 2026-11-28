@@ -1,0 +1,64 @@
+name: setup sovn-release
+description: >-
+  Install sovn-release 0.1.8, which builds and submits PlatformReleases
+  for a Release Operator. Installing it builds and submits nothing; registry
+  logins and the producer token remain the calling step's responsibility.
+
+# Rendered by internal-sdlc-tooling's release for toolbelt-v0.1.8. Each
+# platform archive's SHA-256 is pinned here, so pinning this action's commit
+# pins the bytes the job runs. Installation contacts no registry or operator.
+# The archives are not signed: the SHA-256 verifies bytes, not who published
+# them.
+
+outputs:
+  version:
+    description: The installed sovn-release version.
+    value: "0.1.8"
+  path:
+    description: The absolute path to sovn-release.
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install sovn-release 0.1.8
+      id: install
+      shell: bash
+      env:
+        VERSION: "0.1.8"
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) platform=linux-amd64 sha256=15589048807c07775ffa2e843dccde9768a5afff488e0e63a65f091403d3111e ;;
+          Linux-ARM64) platform=linux-arm64 sha256=795c8784fea29b3fa456471d78dcc07885a63dfb0797e3fbc0e788b7c03b019b ;;
+          macOS-X64) platform=darwin-amd64 sha256=2abd697508d7143b697ee739a76f9a791f9246ab0c5e8a57ce19c137c36839a5 ;;
+          macOS-ARM64) platform=darwin-arm64 sha256=61453657999b02745eaa04e159f55b75a5846090bd462adbf742c327e7629219 ;;
+          *) echo "::error::sovn-release ${VERSION} has no release for ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        archive="sovn-release-${VERSION}-${platform}.tar.gz"
+        dir="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/sovn-release/${VERSION}"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 --proto '=https' -o "$RUNNER_TEMP/$archive" \
+          "https://github.com/ConnectedLabs/toolbelt/releases/download/toolbelt-v${VERSION}/${archive}"
+        echo "${sha256}  $RUNNER_TEMP/$archive" | shasum -a 256 -c - >/dev/null ||
+          { echo "::error::${archive} does not match the SHA-256 this action pins"; exit 1; }
+        tar -xzf "$RUNNER_TEMP/$archive" -C "$dir" --strip-components 1 \
+          "sovn-release-${VERSION}-${platform}/sovn-release"
+        rm -f "$RUNNER_TEMP/$archive"
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "path=$dir/sovn-release" >> "$GITHUB_OUTPUT"
+
+    - name: Validate sovn-release executable
+      shell: bash
+      env:
+        SOVN_RELEASE: ${{ steps.install.outputs.path }}
+      run: |
+        set -euo pipefail
+        if output="$("$SOVN_RELEASE" 2>&1)"; then
+          echo "::error::sovn-release without an operation unexpectedly succeeded"
+          exit 1
+        fi
+        grep -q '^usage:' <<<"$output"
+        installed="$("$SOVN_RELEASE" version)"
+        [[ "$installed" == "0.1.8" ]] ||
+          { echo "::error::the installed sovn-release reports version $installed, not 0.1.8"; exit 1; }
